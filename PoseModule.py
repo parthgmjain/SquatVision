@@ -2,6 +2,8 @@ import cv2
 import mediapipe as mp
 import time
 import math
+import os
+import subprocess
 
 class poseDetector:
     def __init__(self, mode=False, smooth=True, detectionCon=0.5, trackCon=0.5):
@@ -9,8 +11,7 @@ class poseDetector:
         self.smooth = smooth
         self.detectionCon = detectionCon
         self.trackCon = trackCon
-        
-        # Initialize MediaPipe Pose model
+
         self.mp_pose = mp.solutions.pose
         self.pose = self.mp_pose.Pose(
             static_image_mode=self.mode,
@@ -19,16 +20,13 @@ class poseDetector:
             min_tracking_confidence=self.trackCon
         )
         self.mp_drawing = mp.solutions.drawing_utils
-
-        # Define drawing specs once in init
         self.drawing_spec_connections = self.mp_drawing.DrawingSpec(
-            color=(0, 255, 0),  # Green
+            color=(0, 255, 0),
             thickness=2,
             circle_radius=2
         )
-#draws pipes connected by dots
+
     def findPose(self, frame, draw=True):
-        # Convert BGR to RGB
         frame_rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
         self.result = self.pose.process(frame_rgb)
 
@@ -39,9 +37,8 @@ class poseDetector:
                 self.mp_pose.POSE_CONNECTIONS,
                 connection_drawing_spec=self.drawing_spec_connections
             )
-
         return frame, self.result
-#draws dots
+
     def getPosition(self, img, draw=True):
         lmList = []
         if self.result.pose_landmarks:
@@ -50,16 +47,13 @@ class poseDetector:
                 cx, cy = int(lm.x * w), int(lm.y * h)
                 lmList.append([id, cx, cy])
                 if draw:
-                    # Outer circle (border)
-                    cv2.circle(img, (cx, cy), 6, (0, 0, 0), thickness=2)  # Black border
-
-                    # Inner circle (fill)
-                    cv2.circle(img, (cx, cy), 4, (255, 255, 255), thickness=-1)  # white fill
+                    cv2.circle(img, (cx, cy), 6, (0, 0, 0), thickness=2)
+                    cv2.circle(img, (cx, cy), 4, (255, 255, 255), thickness=-1)
         return lmList
+
     def getAngle(self, p1, p2, p3):
-        # p1, p2, p3 are tuples: (x, y)
         x1, y1 = p1
-        x2, y2 = p2  # joint in the middle
+        x2, y2 = p2
         x3, y3 = p3
 
         angle = math.degrees(
@@ -70,23 +64,40 @@ class poseDetector:
             angle = 360 - angle
         return angle
 
+def fix_video_with_ffmpeg(input_path, output_path):
+    print("🔧 Fixing video container with ffmpeg...")
+    fixed_path = output_path.replace(".mp4", "_fixed.mp4")
+    cmd = [
+        "ffmpeg",
+        "-y",
+        "-i", output_path,
+        "-c:v", "libx264",
+        "-preset", "fast",
+        "-pix_fmt", "yuv420p",
+        fixed_path
+    ]
+    subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+    os.replace(fixed_path, output_path)
+    print("✅ Video container fixed!")
 
-def main():
-    cap = cv2.VideoCapture('/Users/roshansanjeev/Desktop/AdvancedComputerVision/Videos/FrontSquat.mp4')
-    pTime = 0
+def process_video(input_path, output_path):
+    print(f"▶️ Starting pose processing on: {input_path}")
+    cap = cv2.VideoCapture(input_path)
+    fourcc = cv2.VideoWriter_fourcc(*'mp4v')  # Use 'avc1' or 'H264' if needed
+    out = None
     detector = poseDetector()
+    pTime = 0
+    frame_count = 0
 
     while cap.isOpened():
         success, frame = cap.read()
-        if not success:
+        if not success or frame is None:
+            print("❌ No more frames or frame is None. Ending...")
             break
 
-        # Detect pose and draw landmarks
         frame, result = detector.findPose(frame)
-
-        # Get landmark positions
         lmList = detector.getPosition(frame)
-        drawing_spec_connections = None  # Default placeholder
+        drawing_spec_connections = None
 
         if lmList:
             lmDict = {id: (x, y) for id, x, y in lmList}
@@ -102,16 +113,12 @@ def main():
                 cv2.putText(frame, f"{int(right_angle)}deg", lmDict[26],
                             cv2.FONT_HERSHEY_PLAIN, 2, (0, 255, 255), 2)
 
-            # Now compare if both angles exist
             if left_angle is not None and right_angle is not None:
                 if abs(left_angle - right_angle) < 5:
-                    drawing_spec_connections = mp.solutions.drawing_utils.DrawingSpec(
-                        color=(0, 255, 0), thickness=2, circle_radius=2)  # Green
+                    drawing_spec_connections = detector.mp_drawing.DrawingSpec(color=(0, 255, 0), thickness=2, circle_radius=2)
                 else:
-                    drawing_spec_connections = mp.solutions.drawing_utils.DrawingSpec(
-                        color=(0, 0, 255), thickness=2, circle_radius=2)  # Red
+                    drawing_spec_connections = detector.mp_drawing.DrawingSpec(color=(0, 0, 255), thickness=2, circle_radius=2)
 
-                # Redraw with updated spec
                 detector.mp_drawing.draw_landmarks(
                     frame,
                     result.pose_landmarks,
@@ -119,25 +126,31 @@ def main():
                     connection_drawing_spec=drawing_spec_connections
                 )
 
+        # Visual indicators
+        cv2.putText(frame, "Processed", (10, 100),
+                    cv2.FONT_HERSHEY_SIMPLEX, 1.2, (0, 255, 0), 3)
 
+        cTime = time.time()
+        fps = 1 / (cTime - pTime) if (cTime - pTime) > 0 else 0
+        pTime = cTime
 
-                # FPS calculation
-                cTime = time.time()
-                fps = 1 / (cTime - pTime) if (cTime - pTime) > 0 else 0
-                pTime = cTime
+        cv2.putText(frame, f'FPS: {int(fps)}', (10, 50),
+                    cv2.FONT_HERSHEY_SIMPLEX, 1, (255, 0, 0), 2)
 
-                # Display FPS
-                cv2.putText(frame, f'FPS: {int(fps)}', (10, 50),
-                            cv2.FONT_HERSHEY_SIMPLEX, 1, (255, 0, 0), 2)
+        if out is None:
+            height, width = frame.shape[:2]
+            print(f"🎬 Creating writer: {output_path} — {width}x{height}")
+            out = cv2.VideoWriter(output_path, fourcc, 24.0, (width, height))
 
-                # Show frame
-                cv2.imshow('MediaPipe Pose', frame)
-                if cv2.waitKey(100) & 0xFF == ord('q'):
-                    break
+        out.write(frame)
+        frame_count += 1
+        if frame_count % 30 == 0:
+            print(f"📽 Processed {frame_count} frames...")
 
     cap.release()
-    cv2.destroyAllWindows()
-
-
-if __name__ == "__main__":
-    main()
+    if out:
+        out.release()
+        print(f"✅ Done! Output saved to: {output_path}")
+        fix_video_with_ffmpeg(input_path, output_path)
+    else:
+        print("⚠️ No output written. Check if video source is readable.")

@@ -1,7 +1,8 @@
+# app.py
 from flask import Flask, request, render_template, redirect, url_for
 import os
 from werkzeug.utils import secure_filename
-import shutil
+from PoseModule import process_video  # ✅ Make sure this is here
 
 app = Flask(__name__)
 UPLOAD_FOLDER = 'static/uploads'
@@ -30,11 +31,9 @@ def upload_video():
     # Save uploaded video
     video.save(upload_path)
 
-    # Run your processing code here (replace this with your actual code)
-    # For demo, we just copy the video to the processed folder
-    shutil.copy(upload_path, processed_path)
+    # ✅ Actually run pose detection
+    process_video(upload_path, processed_path)
 
-    # Send to processed page
     video_url = url_for('static', filename=f'processed/{filename}')
     return render_template('processed.html', video_url=video_url)
 
